@@ -1,0 +1,56 @@
+version: '3.9'
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    container_name: sqlserver
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=${SA_PASSWORD:-Clinica123!}
+      - MSSQL_PID=Express
+    ports:
+      - "1433:1433"
+    volumes:
+      - sql_data:/var/opt/mssql
+      - ./init-db:/init-db
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "${SA_PASSWORD:-Clinica123!}", "-Q", "SELECT 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    container_name: db-init
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      - SA_PASSWORD=${SA_PASSWORD:-Clinica123!}
+    volumes:
+      - ./init-db:/init-db
+    command: >
+      bash -c "
+        /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P \"$$SA_PASSWORD\" -Q \"IF NOT EXISTS (SELECT name FROM sys.databases WHERE name='Clinica') BEGIN PRINT 'Creating DB...' END ELSE PRINT 'DB already exists'\" &&
+        /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P \"$$SA_PASSWORD\" -i /init-db/clinica.sql -b || true
+      "
+    restart: "no"
+
+  backend:
+    build: ./backend
+    container_name: backend
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      - DB_HOST=sqlserver
+      - DB_USER=${DB_USER:-sa}
+      - DB_PASS=${DB_PASS:-Clinica123!}
+      - DB_NAME=${DB_NAME:-Clinica}
+    restart: unless-stopped
+
+volumes:
+  sql_data:

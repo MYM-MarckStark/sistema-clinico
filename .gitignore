@@ -1,0 +1,19 @@
+# Datos del servidor SQL (nunca subir a git)
+sql_data/
+
+# Variables de entorno con secretos
+.env
+.env.local
+.env.production
+
+# Node modules
+backend/node_modules/
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
