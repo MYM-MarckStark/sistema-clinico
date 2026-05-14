@@ -394,7 +394,7 @@ app.get('/api/stats', async (req, res) => {
 });
 
 // ── START ─────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // Render uses 10000 by default
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor en puerto ${PORT}`);
     console.log(`DATABASE_URL: ${process.env.DATABASE_URL ? 'OK' : 'MISSING'}`);
