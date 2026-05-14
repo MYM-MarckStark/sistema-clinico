@@ -4,9 +4,10 @@ const path = require('path');
 const { Pool } = require('pg');
 
 // ── DB ────────────────────────────────────────────────
+const dbUrl = process.env.DATABASE_URL || '';
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    connectionString: dbUrl,
+    ssl: dbUrl.includes('railway.internal') ? false : { rejectUnauthorized: false }
 });
 
 const app = express();
