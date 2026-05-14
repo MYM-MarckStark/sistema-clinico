@@ -1,7 +1,13 @@
 const express = require('express');
 const session = require('express-session');
 const path = require('path');
-const { pool } = require('./db');
+const { Pool } = require('pg');
+
+// ── DB ────────────────────────────────────────────────
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+});
 
 const app = express();
 app.use(express.json());
@@ -13,6 +19,16 @@ app.use(session({
     saveUninitialized: false,
     cookie: { maxAge: 1000 * 60 * 60 * 8 }
 }));
+
+// ── HEALTH ────────────────────────────────────────────
+app.get('/health', async (req, res) => {
+    try {
+        await pool.query('SELECT 1');
+        res.json({ status: 'ok', db: 'connected' });
+    } catch (e) {
+        res.status(500).json({ status: 'error', error: e.message });
+    }
+});
 
 // ── AUTH ──────────────────────────────────────────────
 app.post('/api/login', async (req, res) => {
@@ -50,12 +66,9 @@ app.get('/api/pacientes/buscar', async (req, res) => {
     try {
         const r = await pool.query(`
             SELECT * FROM paciente
-            WHERE nombre ILIKE $1
-               OR apellido ILIKE $1
+            WHERE nombre ILIKE $1 OR apellido ILIKE $1
                OR (nombre || ' ' || apellido) ILIKE $1
-               OR (apellido || ' ' || nombre) ILIKE $1
-               OR telefono ILIKE $1
-               OR email ILIKE $1
+               OR telefono ILIKE $1 OR email ILIKE $1
             ORDER BY apellido, nombre
         `, [`%${q}%`]);
         res.json(r.rows);
@@ -184,7 +197,7 @@ app.put('/api/citas/:id/inasistencia', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── DIAGNÓSTICOS / HISTORIAL ──────────────────────────
+// ── DIAGNÓSTICOS ──────────────────────────────────────
 app.get('/api/historial/:id_paciente', async (req, res) => {
     try {
         const r = await pool.query(`
@@ -202,42 +215,34 @@ app.get('/api/historial/:id_paciente', async (req, res) => {
 app.post('/api/diagnostico', async (req, res) => {
     const { id_paciente, id_doctor, id_cita, motivo, exploracion, diagnostico, tratamiento, fecha } = req.body;
     try {
-        // Buscar o crear expediente
-        let expediente = await pool.query(
-            `SELECT id_expediente FROM expediente WHERE id_paciente=$1`, [id_paciente]
-        );
+        let expediente = await pool.query(`SELECT id_expediente FROM expediente WHERE id_paciente=$1`, [id_paciente]);
         let id_expediente;
         if (expediente.rows.length === 0) {
-            const nuevoExp = await pool.query(
+            const r = await pool.query(
                 `INSERT INTO expediente(id_paciente, fecha_apertura) VALUES($1, NOW()) RETURNING id_expediente`,
                 [id_paciente]
             );
-            id_expediente = nuevoExp.rows[0].id_expediente;
+            id_expediente = r.rows[0].id_expediente;
         } else {
             id_expediente = expediente.rows[0].id_expediente;
         }
-
-        const descripcionCompleta = [
+        const desc = [
             `MOTIVO: ${motivo}`,
             exploracion ? `EXPLORACIÓN: ${exploracion}` : '',
             `DIAGNÓSTICO: ${diagnostico}`,
             tratamiento ? `TRATAMIENTO: ${tratamiento}` : '',
             id_cita ? `CITA: ${id_cita}` : ''
         ].filter(Boolean).join('\n');
-
         await pool.query(
             `INSERT INTO diagnostico(id_expediente,id_doctor,descripcion,fecha) VALUES($1,$2,$3,$4)`,
-            [id_expediente, id_doctor, descripcionCompleta, new Date(fecha)]
+            [id_expediente, id_doctor, desc, new Date(fecha)]
         );
-
-        if (id_cita) {
-            await pool.query(`UPDATE cita SET estado='Completada' WHERE id_cita=$1`, [id_cita]);
-        }
+        if (id_cita) await pool.query(`UPDATE cita SET estado='Completada' WHERE id_cita=$1`, [id_cita]);
         res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── TICKETS / FACTURAS ────────────────────────────────
+// ── TICKETS ───────────────────────────────────────────
 app.get('/api/tickets', async (req, res) => {
     try {
         const r = await pool.query(`
@@ -254,19 +259,16 @@ app.get('/api/tickets', async (req, res) => {
 app.get('/api/tickets/:id', async (req, res) => {
     try {
         const r = await pool.query(`
-            SELECT
-                f.id_factura, f.monto, f.metodo_pago, f.fecha,
-                p.nombre || ' ' || p.apellido AS paciente,
-                p.telefono, p.email,
+            SELECT f.id_factura, f.monto, f.metodo_pago, f.fecha,
+                p.nombre||' '||p.apellido AS paciente, p.telefono, p.email,
                 c.motivo, c.fecha AS fecha_cita, c.hora,
-                d.especialidad,
-                u.username AS doctor
+                d.especialidad, u.username AS doctor
             FROM factura f
-            JOIN cita c ON f.id_cita = c.id_cita
-            JOIN paciente p ON c.id_paciente = p.id_paciente
-            JOIN doctor d ON c.id_doctor = d.id_doctor
-            JOIN usuario u ON d.id_usuario = u.id_usuario
-            WHERE f.id_factura = $1
+            JOIN cita c ON f.id_cita=c.id_cita
+            JOIN paciente p ON c.id_paciente=p.id_paciente
+            JOIN doctor d ON c.id_doctor=d.id_doctor
+            JOIN usuario u ON d.id_usuario=u.id_usuario
+            WHERE f.id_factura=$1
         `, [req.params.id]);
         res.json(r.rows[0] || {});
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -275,15 +277,12 @@ app.get('/api/tickets/:id', async (req, res) => {
 app.get('/api/citas/:id/info-ticket', async (req, res) => {
     try {
         const r = await pool.query(`
-            SELECT
-                c.id_cita, c.motivo,
-                p.nombre || ' ' || p.apellido AS paciente,
-                d.especialidad,
-                d.precio_consulta AS monto
+            SELECT c.id_cita, c.motivo, p.nombre||' '||p.apellido AS paciente,
+                d.especialidad, d.precio_consulta AS monto
             FROM cita c
-            JOIN paciente p ON c.id_paciente = p.id_paciente
-            JOIN doctor d ON c.id_doctor = d.id_doctor
-            WHERE c.id_cita = $1
+            JOIN paciente p ON c.id_paciente=p.id_paciente
+            JOIN doctor d ON c.id_doctor=d.id_doctor
+            WHERE c.id_cita=$1
         `, [req.params.id]);
         res.json(r.rows[0] || {});
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -306,16 +305,12 @@ app.post('/api/tickets', async (req, res) => {
 app.get('/api/reportes', async (req, res) => {
     const { tipo, desde, hasta, periodo } = req.query;
     try {
-        let fechaDesde = desde;
-        let fechaHasta = hasta;
-
+        let fechaDesde = desde, fechaHasta = hasta;
         if (periodo) {
             const hoy = new Date();
-            if (periodo === 'dia') {
-                fechaDesde = fechaHasta = hoy.toISOString().split('T')[0];
-            } else if (periodo === 'semana') {
-                const ini = new Date(hoy);
-                ini.setDate(hoy.getDate() - hoy.getDay());
+            if (periodo === 'dia') { fechaDesde = fechaHasta = hoy.toISOString().split('T')[0]; }
+            else if (periodo === 'semana') {
+                const ini = new Date(hoy); ini.setDate(hoy.getDate() - hoy.getDay());
                 fechaDesde = ini.toISOString().split('T')[0];
                 fechaHasta = hoy.toISOString().split('T')[0];
             } else if (periodo === 'mes') {
@@ -323,16 +318,13 @@ app.get('/api/reportes', async (req, res) => {
                 fechaHasta = hoy.toISOString().split('T')[0];
             }
         }
-
         let query = '';
         if (tipo === 'resumen') {
-            query = `
-                SELECT
-                    (SELECT COUNT(*) FROM cita WHERE fecha BETWEEN $1 AND $2) AS total_citas,
-                    (SELECT COUNT(*) FROM cita WHERE fecha BETWEEN $1 AND $2 AND estado='Completada') AS completadas,
-                    (SELECT COUNT(*) FROM cita WHERE fecha BETWEEN $1 AND $2 AND estado='No asistió') AS faltas,
-                    (SELECT COALESCE(SUM(f.monto),0) FROM factura f JOIN cita c ON f.id_cita=c.id_cita WHERE c.fecha BETWEEN $1 AND $2) AS monto_total
-            `;
+            query = `SELECT
+                (SELECT COUNT(*) FROM cita WHERE fecha BETWEEN $1 AND $2) AS total_citas,
+                (SELECT COUNT(*) FROM cita WHERE fecha BETWEEN $1 AND $2 AND estado='Completada') AS completadas,
+                (SELECT COUNT(*) FROM cita WHERE fecha BETWEEN $1 AND $2 AND estado='No asistió') AS faltas,
+                (SELECT COALESCE(SUM(f.monto),0) FROM factura f JOIN cita c ON f.id_cita=c.id_cita WHERE c.fecha BETWEEN $1 AND $2) AS monto_total`;
         } else if (tipo === 'citas') {
             query = `SELECT estado, COUNT(*) AS total FROM cita WHERE fecha BETWEEN $1 AND $2 GROUP BY estado`;
         } else if (tipo === 'inasistencias') {
@@ -340,7 +332,6 @@ app.get('/api/reportes', async (req, res) => {
         } else if (tipo === 'ingresos') {
             query = `SELECT TO_CHAR(f.fecha,'YYYY-MM-DD') AS fecha, SUM(f.monto) AS total FROM factura f WHERE f.fecha::date BETWEEN $1 AND $2 GROUP BY TO_CHAR(f.fecha,'YYYY-MM-DD') ORDER BY fecha`;
         }
-
         const r = await pool.query(query, [fechaDesde, fechaHasta]);
         res.json(r.rows);
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -350,11 +341,11 @@ app.get('/api/reportes', async (req, res) => {
 app.get('/api/expedientes', async (req, res) => {
     try {
         const r = await pool.query(`
-            SELECT DISTINCT p.id_paciente, p.nombre, p.apellido, p.telefono, p.email,
+            SELECT p.id_paciente, p.nombre, p.apellido, p.telefono, p.email,
                    e.fecha_apertura, COUNT(d.id_diagnostico) as total_diagnosticos
             FROM paciente p
-            JOIN expediente e ON p.id_paciente = e.id_paciente
-            LEFT JOIN diagnostico d ON e.id_expediente = d.id_expediente
+            JOIN expediente e ON p.id_paciente=e.id_paciente
+            LEFT JOIN diagnostico d ON e.id_expediente=d.id_expediente
             GROUP BY p.id_paciente, p.nombre, p.apellido, p.telefono, p.email, e.fecha_apertura
             ORDER BY e.fecha_apertura DESC
         `);
@@ -367,28 +358,17 @@ app.get('/api/consultorios', async (req, res) => {
     try {
         const hoy = new Date().toISOString().split('T')[0];
         const r = await pool.query(`
-            SELECT
-                d.id_doctor,
-                u.username AS doctor,
-                d.especialidad,
-                c.id_cita,
-                c.hora,
-                c.estado,
-                c.motivo,
-                p.nombre || ' ' || p.apellido AS paciente
+            SELECT d.id_doctor, u.username AS doctor, d.especialidad,
+                c.id_cita, c.hora, c.estado, c.motivo,
+                p.nombre||' '||p.apellido AS paciente
             FROM doctor d
-            JOIN usuario u ON d.id_usuario = u.id_usuario
-            LEFT JOIN cita c ON c.id_doctor = d.id_doctor
-                AND c.fecha = $1
-                AND c.estado NOT IN ('Cancelada')
-            LEFT JOIN paciente p ON c.id_paciente = p.id_paciente
+            JOIN usuario u ON d.id_usuario=u.id_usuario
+            LEFT JOIN cita c ON c.id_doctor=d.id_doctor AND c.fecha=$1 AND c.estado NOT IN ('Cancelada')
+            LEFT JOIN paciente p ON c.id_paciente=p.id_paciente
             ORDER BY d.id_doctor, c.hora
         `, [hoy]);
-
         const map = {};
-        r.rows.forEach(row => {
-            if (!map[row.id_doctor]) map[row.id_doctor] = { ...row };
-        });
+        r.rows.forEach(row => { if (!map[row.id_doctor]) map[row.id_doctor] = { ...row }; });
         res.json(Object.values(map));
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -412,23 +392,9 @@ app.get('/api/stats', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── HEALTH CHECK ──────────────────────────────────────
-app.get('/health', async (req, res) => {
-    try {
-        await pool.query('SELECT 1');
-        res.json({ status: 'ok', db: 'connected', env: process.env.NODE_ENV });
-    } catch (e) {
-        res.status(500).json({ status: 'error', db: 'disconnected', error: e.message });
-    }
-});
-
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
+// ── START ─────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Servidor corriendo en http://0.0.0.0:${PORT}`);
-    console.log(`DATABASE_URL: ${process.env.DATABASE_URL ? 'SET' : 'NOT SET'}`);
-    console.log(`NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
+    console.log(`Servidor en puerto ${PORT}`);
+    console.log(`DATABASE_URL: ${process.env.DATABASE_URL ? 'OK' : 'MISSING'}`);
 });
