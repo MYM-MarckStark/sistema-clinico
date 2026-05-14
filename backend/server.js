@@ -412,5 +412,23 @@ app.get('/api/stats', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── HEALTH CHECK ──────────────────────────────────────
+app.get('/health', async (req, res) => {
+    try {
+        await pool.query('SELECT 1');
+        res.json({ status: 'ok', db: 'connected', env: process.env.NODE_ENV });
+    } catch (e) {
+        res.status(500).json({ status: 'error', db: 'disconnected', error: e.message });
+    }
+});
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Servidor corriendo en http://0.0.0.0:${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Servidor corriendo en http://0.0.0.0:${PORT}`);
+    console.log(`DATABASE_URL: ${process.env.DATABASE_URL ? 'SET' : 'NOT SET'}`);
+    console.log(`NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
+});
