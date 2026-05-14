@@ -1,10 +1,10 @@
 const http = require('http');
 
-const PORT = process.env.PORT || 3000;
+const PORT = 8080; // Railway expects 8080
 
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(`OK - Server running on port ${PORT}\nPATH: ${req.url}\n`);
+    res.end(`OK - Server running on port ${PORT}\nPATH: ${req.url}\nPORT env: ${process.env.PORT}\n`);
 });
 
 server.listen(PORT, '0.0.0.0', () => {
