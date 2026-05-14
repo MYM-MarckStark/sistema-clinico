@@ -1,56 +1,36 @@
 version: '3.9'
 
 services:
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2019-latest
-    container_name: sqlserver
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
     environment:
-      - ACCEPT_EULA=Y
-      - SA_PASSWORD=${SA_PASSWORD:-Clinica123!}
-      - MSSQL_PID=Express
+      POSTGRES_DB: clinica
+      POSTGRES_USER: clinica_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Clinica123!}
     ports:
-      - "1433:1433"
+      - "5432:5432"
     volumes:
-      - sql_data:/var/opt/mssql
-      - ./init-db:/init-db
+      - pg_data:/var/lib/postgresql/data
+      - ./init-db/clinica.sql:/docker-entrypoint-initdb.d/clinica.sql
     healthcheck:
-      test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "${SA_PASSWORD:-Clinica123!}", "-Q", "SELECT 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 15
-      start_period: 30s
-
-  db-init:
-    image: mcr.microsoft.com/mssql/server:2019-latest
-    container_name: db-init
-    depends_on:
-      sqlserver:
-        condition: service_healthy
-    environment:
-      - SA_PASSWORD=${SA_PASSWORD:-Clinica123!}
-    volumes:
-      - ./init-db:/init-db
-    command: >
-      bash -c "
-        /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P \"$$SA_PASSWORD\" -Q \"IF NOT EXISTS (SELECT name FROM sys.databases WHERE name='Clinica') BEGIN PRINT 'Creating DB...' END ELSE PRINT 'DB already exists'\" &&
-        /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P \"$$SA_PASSWORD\" -i /init-db/clinica.sql -b || true
-      "
-    restart: "no"
+      test: ["CMD-SHELL", "pg_isready -U clinica_user -d clinica"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
     build: ./backend
     container_name: backend
     depends_on:
-      sqlserver:
+      postgres:
         condition: service_healthy
     ports:
       - "3000:3000"
     environment:
-      - DB_HOST=sqlserver
-      - DB_USER=${DB_USER:-sa}
-      - DB_PASS=${DB_PASS:-Clinica123!}
-      - DB_NAME=${DB_NAME:-Clinica}
+      DATABASE_URL: postgres://clinica_user:${DB_PASSWORD:-Clinica123!}@postgres:5432/clinica
+      SESSION_SECRET: ${SESSION_SECRET:-clinica-secret-2026}
     restart: unless-stopped
 
 volumes:
-  sql_data:
+  pg_data:

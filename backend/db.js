@@ -1,14 +1,10 @@
-const sql = require('mssql');
+const { Pool } = require('pg');
 
-const config = {
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    server: process.env.DB_HOST,
-    database: process.env.DB_NAME,
-    options: {
-        encrypt: false,
-        trustServerCertificate: true
-    }
-};
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway')
+        ? { rejectUnauthorized: false }
+        : false
+});
 
-module.exports = { sql, config };
+module.exports = { pool };

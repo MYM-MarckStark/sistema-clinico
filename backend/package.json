@@ -1,21 +1,18 @@
 {
   "name": "sistema-clinico",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Sistema de gestión clínica",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "bcrypt": "^6.0.0",
-    "express": "^5.2.1",
-    "express-session": "^1.19.0",
-    "mssql": "^12.5.0",
-    "mysql2": "^3.22.2",
-    "sequelize": "^6.37.8"
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "pg": "^8.11.3"
   }
 }
